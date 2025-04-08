@@ -11,6 +11,7 @@ class OutletCreate(BaseModel):
     open_time: Optional[time] = Field(None, example="10:00")
     close_time: Optional[time] = Field(None, example="22:00")
     is_active: bool = Field(default=True)
+    code: str = Field(..., example="OUTLET_PUNE_001")
 
 # --- Schema for API response (includes ID) ---
 class OutletOut(OutletCreate):
