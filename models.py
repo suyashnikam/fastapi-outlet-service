@@ -12,3 +12,4 @@ class Outlet(Base):
     open_time = Column(Time, nullable=True)
     close_time = Column(Time, nullable=True)
     is_active = Column(Boolean, default=True)
+    code = Column(String, unique=True, nullable=False, index=True)
