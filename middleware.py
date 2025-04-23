@@ -49,8 +49,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         import os
         import requests
         from fastapi import status
-        print(os.getenv("USER_SERVICE_BASE_URL"))
-        user_service_url = os.getenv("USER_SERVICE_BASE_URL", "http://127.0.0.1:8001") + "/auth/validate"
+        user_service_url = os.getenv("USER_SERVICE_BASE_URL", "http://127.0.0.1:8001") + "/api/v1/auth/validate"
         headers = {"Authorization": f"Bearer {token}"}
 
         try:
