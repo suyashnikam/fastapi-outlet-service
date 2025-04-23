@@ -1,22 +1,42 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Header
 from sqlalchemy.orm import Session
-import models, schemas, database
-from models import Outlet
-import requests
+from fastapi_jwt_auth import AuthJWT
 from typing import Optional
+import requests
 import os
 from dotenv import load_dotenv
+
+import models, schemas, database
+from models import Outlet
+
 load_dotenv()
 
-outlet_router = APIRouter(prefix="/outlet", tags=["Outlet"])
+outlet_router = APIRouter(prefix="/api/v1/outlet", tags=["Outlet"])
 
+# ✅ Auth & Role utilities (kept inline as you requested)
+def jwt_required(Authorize: AuthJWT = Depends()):
+    try:
+        Authorize.jwt_required()
+        return Authorize.get_raw_jwt()
+    except Exception:
+        raise HTTPException(status_code=401, detail="Unauthorized access")
 
-# ✅ Create new outlet
+def role_required(required_role: str):
+    def checker(payload=Depends(jwt_required)):
+        role = payload.get("role")
+        if role != required_role:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied. Requires '{required_role}' role."
+            )
+    return checker
+
+# ✅ Create new outlet (Admin only)
 @outlet_router.post("/create", response_model=schemas.OutletOut, status_code=status.HTTP_201_CREATED)
 def create_outlet(
     outlet: schemas.OutletCreate,
     db: Session = Depends(database.get_db),
-    authorization: Optional[str] = Header(None)
+    _: str = Depends(role_required("ADMIN"))
 ):
     new_outlet = Outlet(**outlet.dict())
     db.add(new_outlet)
@@ -24,53 +44,33 @@ def create_outlet(
     db.refresh(new_outlet)
     return new_outlet
 
-
-# ✅ Get all outlets
-@outlet_router.get("/", response_model= list[schemas.OutletOut])
+# ✅ Get all outlets (open access)
+@outlet_router.get("/", response_model=list[schemas.OutletOut])
 def list_outlets(
     db: Session = Depends(database.get_db),
-    authorization: Optional[str] = Header(None)
 ):
     return db.query(Outlet).all()
 
-
-# ✅ Get outlet by ID
-@outlet_router.get("/{outlet_id}", response_model=schemas.OutletOut)
-def get_outlet(
-    outlet_id: int,
-    db: Session = Depends(database.get_db),
-    authorization: Optional[str] = Header(None)
-):
-    outlet = db.query(models.Outlet).filter(models.Outlet.id == outlet_id).first()
-    if not outlet:
-        raise HTTPException(status_code=404, detail="Outlet not found for this ID!!")
-    return outlet
-
-
-# ✅ Get outlet by ID
-@outlet_router.get("/by-code/{outlet_code}", response_model=schemas.OutletOut)
+# ✅ Get outlet by outlet_code
+@outlet_router.get("/{outlet_code}", response_model=schemas.OutletOut)
 def get_outlet(
     outlet_code: str,
     db: Session = Depends(database.get_db),
-    authorization: Optional[str] = Header(None)
 ):
-    outlet = db.query(models.Outlet).filter(models.Outlet.code == outlet_code).first()
-    print(authorization)
-    print("Outlet for code outlet_code",outlet)
+    outlet = db.query(Outlet).filter(Outlet.code == outlet_code).first()
     if not outlet:
         raise HTTPException(status_code=404, detail="Outlet not found with this code!!")
     return outlet
 
-
-# ✅ Update outlet
+# ✅ Update outlet (Admin only)
 @outlet_router.put("/{outlet_id}", response_model=schemas.OutletOut)
 def update_outlet(
     outlet_id: int,
     outlet_data: schemas.OutletCreate,
     db: Session = Depends(database.get_db),
-    authorization: Optional[str] = Header(None)
+    _: str = Depends(role_required("ADMIN"))
 ):
-    outlet = db.query(models.Outlet).filter(models.Outlet.id == outlet_id).first()
+    outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
     if not outlet:
         raise HTTPException(status_code=404, detail="Outlet not found")
 
@@ -81,15 +81,14 @@ def update_outlet(
     db.refresh(outlet)
     return outlet
 
-
-# ✅ Delete outlet
+# ✅ Delete outlet (Admin only)
 @outlet_router.delete("/{outlet_id}", response_model=dict, status_code=status.HTTP_200_OK)
 def delete_outlet(
     outlet_id: int,
     db: Session = Depends(database.get_db),
-    authorization: Optional[str] = Header(None)
+    _: str = Depends(role_required("ADMIN"))
 ):
-    outlet = db.query(models.Outlet).filter(models.Outlet.id == outlet_id).first()
+    outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
     if not outlet:
         raise HTTPException(status_code=404, detail="Outlet not found")
 
@@ -97,25 +96,21 @@ def delete_outlet(
     db.commit()
     return {"message": f"Outlet with ID {outlet_id} has been deleted successfully"}
 
-# ✅ Get available pizzas at outlet
+# ✅ Get available pizzas at outlet (auth optional, for inter-service)
 @outlet_router.get("/{outlet_code}/pizzas", response_model=list[dict])
 def get_outlet_pizzas(
     outlet_code: str,
     db: Session = Depends(database.get_db),
-    Authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None, alias="Authorization")
 ):
-    outlet = db.query(models.Outlet).filter(models.Outlet.code == outlet_code).first()
+    outlet = db.query(Outlet).filter(Outlet.code == outlet_code).first()
     if not outlet:
         raise HTTPException(status_code=404, detail="Outlet not found")
 
     try:
-        headers = {"Authorization": f"{Authorization}"}
-        pizza_service_url = os.getenv("PIZZA_SERVICE_BASE_URL",
-                                       "http://127.0.0.1:8005") + f"/pizza/for-outlet/{outlet_code}"
-        print(pizza_service_url)
-        print(headers)
-        response = requests.get(pizza_service_url, headers=headers, timeout=5)
-        print(response)
+        headers = {"Authorization": authorization} if authorization else {}
+        pizza_service_url = os.getenv("PIZZA_SERVICE_BASE_URL", "http://127.0.0.1:8005")
+        response = requests.get(f"{pizza_service_url}/api/v1/pizza/for-outlet/{outlet_code}", headers=headers, timeout=5)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
