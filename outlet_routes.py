@@ -5,10 +5,10 @@ from typing import Optional
 import requests
 import os
 from dotenv import load_dotenv
-
+from redis_client import redis_client
 import models, schemas, database
 from models import Outlet
-
+import json
 load_dotenv()
 
 outlet_router = APIRouter(prefix="/api/v1/outlet", tags=["Outlet"])
@@ -42,6 +42,7 @@ def create_outlet(
     db.add(new_outlet)
     db.commit()
     db.refresh(new_outlet)
+    redis_client.delete("all_outlets")
     return new_outlet
 
 # ✅ Get all outlets (open access)
@@ -49,7 +50,16 @@ def create_outlet(
 def list_outlets(
     db: Session = Depends(database.get_db),
 ):
-    return db.query(Outlet).all()
+    cache_key = "all_outlets"
+    cached = redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    outlets = db.query(Outlet).all()
+    # Use from_orm to convert models to dicts
+    data = [json.loads(schemas.OutletOut.from_orm(outlet).json()) for outlet in outlets]
+
+    redis_client.set(cache_key, json.dumps(data), ex=300)  # Cache for 5 mins
+    return data
 
 # ✅ Get outlet by outlet_code
 @outlet_router.get("/{outlet_code}", response_model=schemas.OutletOut)
@@ -79,6 +89,7 @@ def update_outlet(
 
     db.commit()
     db.refresh(outlet)
+    redis_client.delete("all_outlets")
     return outlet
 
 # ✅ Delete outlet (Admin only)
@@ -94,6 +105,7 @@ def delete_outlet(
 
     db.delete(outlet)
     db.commit()
+    redis_client.delete("all_outlets")
     return {"message": f"Outlet with ID {outlet_id} has been deleted successfully"}
 
 # ✅ Get available pizzas at outlet (auth optional, for inter-service)
